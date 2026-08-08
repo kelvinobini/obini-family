@@ -22,4 +22,6 @@ yarn-error.log*
 
 next-env.d.ts
 *.tsbuildinfo
+
+# Vercel's project link. Contains the project and org id — local only.
 .vercel
