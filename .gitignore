@@ -25,3 +25,5 @@ next-env.d.ts
 
 # Vercel's project link. Contains the project and org id — local only.
 .vercel
+
+.env*

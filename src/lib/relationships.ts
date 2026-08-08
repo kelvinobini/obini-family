@@ -1,5 +1,12 @@
-import type { FamilyGraph, GraphPerson } from "@/lib/graph";
-import { ancestorsOf, compareBirth, isFullSibling, siblingsOf } from "@/lib/graph";
+// Imported from graph-core, not graph: this file is pure logic and must stay
+// runnable outside Next, so it can be checked without a database.
+import type { FamilyGraph, GraphPerson } from "@/lib/graph-core";
+import {
+  ancestorsOf,
+  compareBirth,
+  isFullSibling,
+  siblingsOf,
+} from "@/lib/graph-core";
 
 /**
  * ---------------------------------------------------------------------------
@@ -66,12 +73,19 @@ function neighbours(
   for (const s of graph.explicitSiblings.get(id) ?? []) {
     out.push({ from: id, to: s.id, kind: "SIBLING", variant: s.type });
   }
-  if (includeMarriage) {
-    for (const s of graph.spouses.get(id) ?? []) {
-      out.push({ from: id, to: s.id, kind: "SPOUSE" });
-    }
-  }
-  return out;
+  if (!includeMarriage) return out;
+
+  const married: PathStep[] = (graph.spouses.get(id) ?? []).map((s) => ({
+    from: id,
+    to: s.id,
+    kind: "SPOUSE" as const,
+  }));
+
+  // This pass only runs once we know the two are not blood relatives, so the
+  // marriage is the meaningful link and gets explored first. Otherwise two
+  // co-wives get joined through a step-child — "your step-son's mother" —
+  // when what they actually are is wives of the same husband.
+  return [...married, ...out];
 }
 
 function findPath(
@@ -375,8 +389,13 @@ function bloodTerm(
             return parent ? seniority(graph, target, parent) : null;
           })()
         : null;
+    // Seniority is left out of the English term — "younger aunt" is not
+    // English — but kept in the code, because it is exactly the distinction a
+    // family's own kinship terms turn on (Dede nna is specifically the
+    // father's ELDER brother). The chain still says "your father's younger
+    // sister", so nothing is lost.
     return {
-      term: `${side ? `${side} ` : ""}${rank ? `${rank} ` : ""}${label}`,
+      term: `${side ? `${side} ` : ""}${label}`,
       code:
         `${side ? `${side.toUpperCase()}_` : ""}${rank ? `${rank.toUpperCase()}_` : ""}` +
         `${up === 2 ? "" : "GREAT_".repeat(up - 2)}${pick(g, "UNCLE", "AUNT", "PARENTS_SIBLING")}`,
@@ -511,10 +530,21 @@ export function describeRelationship(
     };
   }
 
-  // Blood first. Only if there is no path by blood do we go looking through
-  // marriage, so cousins who also married in are still called cousins.
+  // Prefer blood, so two people who are both cousins and in-laws are told they
+  // are cousins.
+  //
+  // But "a path exists that avoids marriage" is NOT the same as "they are blood
+  // relatives". A husband and wife are joined through their own child —
+  // father → son → son's mother — which avoids every SPOUSE edge while being
+  // pure affinity. So the test is whether the blood path actually yields a
+  // blood term; if it doesn't, we fall back to the route through marriage,
+  // which is usually shorter and always more honest.
   const bloodSteps = findPath(graph, fromId, toId, false);
-  const rawSteps = bloodSteps ?? findPath(graph, fromId, toId, true);
+  const blood = bloodSteps
+    ? bloodTerm(graph, fromId, toId, collapseSiblingSteps(bloodSteps))
+    : null;
+
+  const rawSteps = blood ? bloodSteps : (findPath(graph, fromId, toId, true) ?? bloodSteps);
 
   if (!rawSteps) {
     return {
@@ -532,7 +562,6 @@ export function describeRelationship(
     .map((step, i) => nameStep(graph, step, i === 0))
     .join("'s ");
 
-  const blood = bloodSteps ? bloodTerm(graph, fromId, toId, steps) : null;
   const inLaw = blood ? null : marriageTerm(graph, fromId, steps);
 
   const term = blood?.term ?? inLaw?.term ?? "relative";
