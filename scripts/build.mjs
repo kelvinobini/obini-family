@@ -52,22 +52,71 @@ if (!pooled || !direct) {
   process.exit(1);
 }
 
-process.env.DATABASE_URL = pooled.value;
-process.env.DIRECT_URL = direct.value;
+/**
+ * Migrations must not go through a connection pooler. Prisma takes an advisory
+ * lock and issues DDL, and PgBouncer in transaction mode breaks both — usually
+ * with a confusing error about prepared statements rather than about pooling.
+ *
+ * Neon names its pooled host with a "-pooler" suffix and its direct host
+ * identically without it, so when the only string we were given is the pooled
+ * one we can derive the direct one instead of failing.
+ */
+function unpool(url) {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("-pooler")) return null;
+    parsed.hostname = parsed.hostname.replace("-pooler", "");
+    // These are pooler-specific and meaningless (or harmful) on a direct link.
+    parsed.searchParams.delete("pgbouncer");
+    parsed.searchParams.delete("connection_limit");
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
 
-// Names only. Never the values — build logs are not a secret store.
-console.log(`  database  ← ${pooled.name}`);
-console.log(`  migrations ← ${direct.name}`);
-if (pooled.name === direct.name) {
+let directValue = direct.value;
+let directSource = direct.name;
+
+const derived = unpool(directValue);
+if (derived) {
+  directValue = derived;
+  directSource = `${direct.name} (pooler suffix removed)`;
+}
+
+process.env.DATABASE_URL = pooled.value;
+process.env.DIRECT_URL = directValue;
+
+/** Host only. Build logs are not a secret store, so never the whole URL. */
+const hostOf = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "unparseable";
+  }
+};
+
+console.log(`  app queries ← ${pooled.name}  (${hostOf(pooled.value)})`);
+console.log(`  migrations  ← ${directSource}  (${hostOf(directValue)})`);
+
+if (hostOf(pooled.value) === hostOf(directValue) && hostOf(directValue).includes("-pooler")) {
   console.log(
-    "  note: pooled and direct are the same connection. Fine locally;\n" +
-      "        on serverless, attach a pooler before the family grows."
+    "\n  WARNING: migrations are about to run through a connection pooler.\n" +
+      "  If this fails, set DIRECT_URL to the unpooled connection string.\n"
   );
 }
 
 const run = (command) => {
   console.log(`\n$ ${command}`);
-  execSync(command, { stdio: "inherit", env: process.env });
+  try {
+    execSync(command, { stdio: "inherit", env: process.env });
+  } catch {
+    // execSync throws an Error whose dump buries the real message that the
+    // child already printed above. Exit quietly so the last thing in the log
+    // is the actual cause.
+    console.error(`\n  Build stopped: "${command}" failed. The error is just above.\n`);
+    process.exit(1);
+  }
 };
 
 run("prisma generate");
