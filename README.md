@@ -99,11 +99,23 @@ gh repo create obini-family --public --source=. --push
 preset as Next.js. The build command already runs `prisma migrate deploy`, so
 the schema is applied on every deploy.
 
-**3. Attach Postgres.** Storage → Neon (or any Postgres). Vercel injects
-`DATABASE_URL` and `DIRECT_URL`. The split matters: the app uses the pooled
-connection because every request is a fresh serverless invocation and direct
-connections would exhaust Postgres' limit, while migrations need the unpooled
-one because poolers cannot run DDL.
+**3. Attach Postgres.** Storage → Neon (or any Postgres). Nothing else to do:
+`scripts/build.mjs` works out which connection string is which before Prisma
+runs.
+
+That indirection earns its place. Prisma's schema asks for `DATABASE_URL` and
+`DIRECT_URL`, and no provider is called that — Neon on Vercel gives
+`DATABASE_URL` and `DATABASE_URL_UNPOOLED`, the older Vercel Postgres
+integration gives `POSTGRES_PRISMA_URL` and `POSTGRES_URL_NON_POOLING`, and a
+plain Neon project gives one string and no pooler. Prisma refuses to validate a
+schema whose variables are missing, so the mismatch shows up as a bare `P1012`
+during build rather than anything that names the real problem. The build script
+maps whichever names exist onto the two Prisma wants.
+
+The split itself matters: the app uses the pooled connection because every
+request is a fresh serverless invocation and direct connections would exhaust
+Postgres' limit, while migrations need the unpooled one because poolers cannot
+run DDL.
 
 **4. Attach Blob storage.** Storage → Blob. Vercel injects
 `BLOB_READ_WRITE_TOKEN`. Then set `STORAGE_DRIVER=blob`.
