@@ -1,0 +1,214 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   The Obini Family Tree
+
+   Built for a family, not a dashboard. Warm paper, deep indigo, terracotta.
+   Defaults are deliberately large: the people most likely to be reading this
+   are the oldest people in the family, on a phone, in bright sunlight.
+   --------------------------------------------------------------------------- */
+
+@theme {
+  --color-paper: #fdfaf5;
+  --color-paper-2: #f6efe4;
+  --color-paper-3: #ece0cd;
+
+  --color-ink: #241d16;
+  --color-ink-soft: #5b4f42;
+  --color-ink-faint: #8a7c6c;
+
+  --color-indigo-deep: #2a3556;
+  --color-indigo: #3d4c78;
+  --color-indigo-soft: #dfe3ef;
+
+  --color-terracotta: #b4552d;
+  --color-terracotta-soft: #f7e4db;
+
+  --color-gold: #b8892b;
+  --color-gold-soft: #f6ecd4;
+
+  --color-sage: #4f6b52;
+  --color-sage-soft: #e2ebe1;
+
+  --color-rose: #a03449;
+  --color-rose-soft: #f8e2e5;
+
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* Base size is 17px, not 16px. It reads better for older eyes and costs
+     nothing on a phone. */
+  --text-base: 1.0625rem;
+}
+
+@layer base {
+  html {
+    font-size: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    /* Faint woven texture, like the back of a photo album. */
+    background-image:
+      radial-gradient(circle at 15% 12%, rgba(184, 137, 43, 0.05), transparent 42%),
+      radial-gradient(circle at 85% 78%, rgba(61, 76, 120, 0.05), transparent 46%);
+    background-attachment: fixed;
+    min-height: 100dvh;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-serif);
+    color: var(--color-indigo-deep);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  /* Nothing in this app should require a hover to discover. Focus, though,
+     must always be loud. */
+  :focus-visible {
+    outline: 3px solid var(--color-terracotta);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Every interactive control clears the 44px tap target minimum. */
+  button, a[role="button"], [type="submit"], [type="button"] {
+    min-height: 44px;
+  }
+
+  input, select, textarea {
+    font-size: 1.0625rem; /* keeps iOS from zooming on focus */
+    min-height: 44px;
+  }
+
+  ::placeholder {
+    color: var(--color-ink-faint);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  .card {
+    background: #fff;
+    border: 1px solid var(--color-paper-3);
+    border-radius: 1rem;
+    box-shadow: 0 1px 2px rgba(36, 29, 22, 0.04),
+      0 8px 24px -18px rgba(36, 29, 22, 0.35);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.15rem;
+    border-radius: 0.75rem;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--color-indigo-deep);
+    color: #fff;
+    border: 1px solid var(--color-indigo-deep);
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--color-indigo); }
+
+  .btn-secondary {
+    background: #fff;
+    color: var(--color-indigo-deep);
+    border: 1px solid var(--color-paper-3);
+  }
+  .btn-secondary:hover:not(:disabled) { background: var(--color-paper-2); }
+
+  .btn-warm {
+    background: var(--color-terracotta);
+    color: #fff;
+    border: 1px solid var(--color-terracotta);
+  }
+  .btn-warm:hover:not(:disabled) { filter: brightness(1.07); }
+
+  .btn-quiet {
+    background: transparent;
+    color: var(--color-ink-soft);
+    border: 1px solid transparent;
+  }
+  .btn-quiet:hover:not(:disabled) { background: var(--color-paper-2); }
+
+  .field {
+    width: 100%;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid var(--color-paper-3);
+    border-radius: 0.7rem;
+    background: #fff;
+    color: var(--color-ink);
+  }
+  .field:focus { border-color: var(--color-indigo); }
+
+  .label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--color-ink-soft);
+    margin-bottom: 0.3rem;
+  }
+
+  .hint {
+    font-size: 0.9rem;
+    color: var(--color-ink-faint);
+    margin-top: 0.3rem;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+
+  .prose-family {
+    font-family: var(--font-serif);
+    font-size: 1.1rem;
+    line-height: 1.75;
+    color: var(--color-ink);
+  }
+  .prose-family p { margin-bottom: 1rem; }
+  .prose-family p:last-child { margin-bottom: 0; }
+}
+
+/* Respect a reduced-motion preference: the tree canvas animates otherwise. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Print: posters and profile PDFs. Chrome's "Save as PDF" is the export path,
+   so the print stylesheet is a real deliverable, not an afterthought. */
+@media print {
+  body {
+    background: #fff !important;
+    background-image: none !important;
+    color: #000;
+  }
+  .no-print { display: none !important; }
+  .card { box-shadow: none; border-color: #ccc; break-inside: avoid; }
+  a[href]::after { content: ""; }
+  @page { margin: 14mm; }
+}

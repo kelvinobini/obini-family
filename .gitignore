@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+*.pem
+
+# Secrets — never commit these.
+.env
+.env.local
+.env.*.local
+
+# Family media stored by the local storage driver. Real photos of real
+# relatives do not belong in version control.
+/storage/
+/backups/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+next-env.d.ts
+*.tsbuildinfo
+.vercel

@@ -1,0 +1,845 @@
+// ---------------------------------------------------------------------------
+// The Obini Family Tree
+//
+// Design rule that everything else hangs off: a Person row holds only facts
+// about that one human. Every connection between two humans lives in its own
+// table (Union, ParentChild, SiblingLink). That is what lets the tree carry
+// remarriage, half-siblings, step-parents, adoption, guardianship and
+// polygynous households without the schema fighting us.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Pooled connection. On Vercel every request is a fresh serverless
+  // invocation, so a direct connection would exhaust Postgres' connection
+  // limit almost immediately.
+  url = env("DATABASE_URL")
+  // Migrations need a single unpooled connection — poolers can't run DDL.
+  // Falls back to DATABASE_URL locally, where there is no pooler.
+  directUrl = env("DIRECT_URL")
+}
+
+// ===========================================================================
+// Accounts, roles, sessions
+// ===========================================================================
+
+/// Contributor is deliberately absent: a contributor has no account. They act
+/// through a single-use ContributorLink and everything they submit is unverified.
+enum Role {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String?    @unique
+  phone     String?    @unique
+  name      String
+  role      Role       @default(VIEWER)
+  status    UserStatus @default(ACTIVE)
+
+  /// Exactly one user may hold this. Guarded in application code and by a
+  /// partial unique index in the migration.
+  isPrimaryAdmin Boolean @default(false)
+
+  /// The node in the tree that *is* this person. Nullable because an admin
+  /// account need not appear in the family (and a person need not have an account).
+  personId String? @unique
+  person   Person? @relation("PersonAccount", fields: [personId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+  deletedAt   DateTime?
+
+  sessions          Session[]
+  stewardships      Stewardship[]      @relation("StewardUser")
+  stewardshipsGiven Stewardship[]      @relation("StewardGrantedBy")
+  invitesSent       Invitation[]       @relation("InviteSender")
+  contributorLinks  ContributorLink[]  @relation("LinkCreator")
+  suggestions       Suggestion[]       @relation("SuggestionAuthor")
+  reviews           Suggestion[]       @relation("SuggestionReviewer")
+  auditEntries      AuditLog[]         @relation("AuditActor")
+  rollbacks         AuditLog[]         @relation("AuditRollbackBy")
+  media             Media[]            @relation("MediaUploader")
+  stories           Story[]            @relation("StoryAuthor")
+  comments          Comment[]
+  reactions         Reaction[]
+  recordedPeople    Person[]           @relation("PersonRecordedBy")
+  verifiedPeople    Person[]           @relation("PersonVerifiedBy")
+
+  @@index([role, status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the cookie value. The raw token is never stored.
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  revokedAt DateTime?
+  ip        String?
+  userAgent String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum LoginPurpose {
+  SIGN_IN
+  INVITE_ACCEPT
+}
+
+/// Short-lived sign-in credential. Holds both a 6-digit code (typed by hand,
+/// which elders manage better) and a click-through magic-link token.
+model LoginToken {
+  id          String       @id @default(cuid())
+  email       String?
+  phone       String?
+  codeHash    String
+  linkHash    String       @unique
+  purpose     LoginPurpose @default(SIGN_IN)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int          @default(0)
+  createdAt   DateTime     @default(now())
+  ip          String?
+
+  @@index([email])
+  @@index([phone])
+  @@index([expiresAt])
+}
+
+// ===========================================================================
+// People
+// ===========================================================================
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+}
+
+/// Real family records have ragged dates. "Born around the war" is a fact worth
+/// keeping; forcing it into a precise timestamp destroys it.
+enum DatePrecision {
+  EXACT
+  MONTH
+  YEAR
+  APPROX
+  UNKNOWN
+}
+
+enum PrivacyLevel {
+  NORMAL
+  /// Visible in the tree and by name, everything else hidden from everyone
+  /// except an admin. Any member may set this on themselves.
+  LIMITED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  VERIFIED
+}
+
+model Person {
+  id String @id @default(cuid())
+
+  // --- Names. Each is its own field and its own label in the UI. Flattening
+  // these into one string is how a family loses its oríkì. -------------------
+  legalName     String
+  nativeName    String?
+  praiseName    String? /// oríkì / praise name
+  nickname      String?
+  baptismalName String?
+
+  // --- Standing in the family ---------------------------------------------
+  birthOrder     Int? /// 3 in "3rd of 7"
+  siblingCount   Int? /// 7 in "3rd of 7"
+  birthOrderName String? /// e.g. Taiwo, Kehinde, Ada
+  titles         String[] @default([]) /// chieftaincy / honorary titles
+
+  gender Gender @default(UNKNOWN)
+
+  // --- Life dates ----------------------------------------------------------
+  birthDate      DateTime?
+  birthPrecision DatePrecision @default(UNKNOWN)
+  birthDateText  String? /// free text when no date exists at all
+  birthPlace     String?
+
+  isDeceased     Boolean       @default(false)
+  deathDate      DateTime?
+  deathPrecision DatePrecision @default(UNKNOWN)
+  deathDateText  String?
+  deathPlace     String?
+  burialPlace    String?
+
+  // --- Origin --------------------------------------------------------------
+  hometown    String?
+  village     String?
+  compound    String?
+  familyHouse String?
+  stateRegion String?
+  country     String?
+  ethnicGroup String?
+  languages   String[] @default([])
+
+  // --- Optional life detail ------------------------------------------------
+  occupation String?
+  education  String?
+  religion   String?
+
+  /// Long-form life story, stored as markdown.
+  lifeStory String?
+
+  // --- Contact. Never shown for minors. Gated for the living. ---------------
+  phone           String?
+  email           String?
+  whatsapp        String?
+  cityOfResidence String?
+
+  // --- Privacy -------------------------------------------------------------
+  privacyLevel PrivacyLevel @default(NORMAL)
+  /// Per-field overrides a member sets on themselves, e.g.
+  /// { "phone": "ADMIN_ONLY", "birthDate": "MEMBERS" }
+  fieldPrivacy Json?
+  /// Set when birthDate is unknown but we know they are a child.
+  minorOverride Boolean @default(false)
+
+  // --- Provenance ----------------------------------------------------------
+  verification   VerificationStatus @default(UNVERIFIED)
+  recordedById   String?
+  recordedBy     User?              @relation("PersonRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  lastVerifiedById String?
+  lastVerifiedBy   User?            @relation("PersonVerifiedBy", fields: [lastVerifiedById], references: [id], onDelete: SetNull)
+  lastVerifiedAt   DateTime?
+
+  /// Marks obviously-fake seed rows so they can be cleared in one action
+  /// before real relatives are invited.
+  isSeed Boolean @default(false)
+
+  // --- Deletion ------------------------------------------------------------
+  /// Soft delete with a 30-day recovery window.
+  deletedAt DateTime?
+  /// Honoured data-removal request: the node survives so the tree does not
+  /// break, but carries a name and nothing else.
+  nameOnly            Boolean   @default(false)
+  removalRequestedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account User? @relation("PersonAccount")
+
+  // Relationship edges — all in their own tables.
+  unionsAsA     Union[]       @relation("UnionPartnerA")
+  unionsAsB     Union[]       @relation("UnionPartnerB")
+  parentEdges   ParentChild[] @relation("EdgeParent")
+  childEdges    ParentChild[] @relation("EdgeChild")
+  siblingEdgesA SiblingLink[] @relation("SiblingA")
+  siblingEdgesB SiblingLink[] @relation("SiblingB")
+
+  stewardships Stewardship[]
+  media        Media[]
+  milestones   Milestone[]
+  storyTags    StoryTag[]
+  eventPeople  EventPerson[]
+  suggestions  Suggestion[]  @relation("SuggestionTarget")
+  invitations  Invitation[]  @relation("InviteTargetPerson")
+  contributorLinks ContributorLink[] @relation("LinkAboutPerson")
+
+  @@index([legalName])
+  @@index([hometown])
+  @@index([isDeceased])
+  @@index([deletedAt])
+  @@index([isSeed])
+}
+
+// ---------------------------------------------------------------------------
+// Relationship edges
+// ---------------------------------------------------------------------------
+
+enum UnionType {
+  MARRIAGE
+  CUSTOMARY
+  PARTNERSHIP
+  UNKNOWN
+}
+
+enum UnionEndReason {
+  DEATH
+  DIVORCE
+  SEPARATION
+  ANNULMENT
+}
+
+/// One union = one pairing. A polygynous household is one person holding
+/// several concurrent unions, distinguished by householdOrder (1st wife, 2nd
+/// wife). Remarriage after death is a union closed with endReason = DEATH
+/// followed by a later one. Neither needs a schema change.
+model Union {
+  id String @id @default(cuid())
+
+  partnerAId String
+  partnerA   Person @relation("UnionPartnerA", fields: [partnerAId], references: [id], onDelete: Cascade)
+  partnerBId String
+  partnerB   Person @relation("UnionPartnerB", fields: [partnerBId], references: [id], onDelete: Cascade)
+
+  type UnionType @default(MARRIAGE)
+
+  startDate      DateTime?
+  startPrecision DatePrecision @default(UNKNOWN)
+  startDateText  String?
+  place          String?
+
+  endDate     DateTime?
+  endReason   UnionEndReason?
+  isCurrent   Boolean         @default(true)
+
+  /// 1 = first wife, 2 = second wife, … Only meaningful in polygynous households.
+  householdOrder Int?
+
+  notes     String?
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  children ParentChild[]
+
+  @@unique([partnerAId, partnerBId, startDate], name: "union_pair_start")
+  @@index([partnerAId])
+  @@index([partnerBId])
+}
+
+enum ParentType {
+  BIOLOGICAL
+  ADOPTIVE
+  STEP
+  FOSTER
+  GUARDIAN
+  UNKNOWN
+}
+
+/// One row per parent, per child. Two rows give a child two parents; one row
+/// is a child with a single recorded parent; a third row of type ADOPTIVE or
+/// STEP sits alongside the biological pair without contradicting it.
+/// Half-siblings fall out of this for free: they share one row's parent, not two.
+model ParentChild {
+  id String @id @default(cuid())
+
+  parentId String
+  parent   Person @relation("EdgeParent", fields: [parentId], references: [id], onDelete: Cascade)
+  childId  String
+  child    Person @relation("EdgeChild", fields: [childId], references: [id], onDelete: Cascade)
+
+  type ParentType @default(BIOLOGICAL)
+
+  /// Optional: which union this child was born into. Lets the tree draw the
+  /// child under the right marriage when a parent had several.
+  unionId String?
+  union   Union?  @relation(fields: [unionId], references: [id], onDelete: SetNull)
+
+  /// For GUARDIAN/FOSTER edges that started and ended at known times.
+  startDate DateTime?
+  endDate   DateTime?
+  notes     String?
+
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([parentId, childId, type], name: "parent_child_type")
+  @@index([parentId])
+  @@index([childId])
+}
+
+enum SiblingType {
+  FULL
+  HALF
+  STEP
+  ADOPTIVE
+  UNKNOWN
+}
+
+/// Only for siblings whose shared parent is not recorded yet. When the parents
+/// are known the sibling relation is derived from ParentChild and this table
+/// stays empty — it exists so "these two are brothers, we just never wrote
+/// down their father" is storable.
+model SiblingLink {
+  id   String      @id @default(cuid())
+  aId  String
+  a    Person      @relation("SiblingA", fields: [aId], references: [id], onDelete: Cascade)
+  bId  String
+  b    Person      @relation("SiblingB", fields: [bId], references: [id], onDelete: Cascade)
+  type SiblingType @default(UNKNOWN)
+
+  notes     String?
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([aId, bId], name: "sibling_pair")
+  @@index([aId])
+  @@index([bId])
+}
+
+/// Admin-granted right for a member to maintain someone else's record —
+/// a deceased elder, or a relative who will never log in.
+model Stewardship {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation("StewardUser", fields: [userId], references: [id], onDelete: Cascade)
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  grantedById String?
+  grantedBy   User?    @relation("StewardGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  note        String?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@unique([userId, personId], name: "steward_pair")
+  @@index([personId])
+}
+
+// ===========================================================================
+// Getting people in: invitations and contributor links
+// ===========================================================================
+
+model Invitation {
+  id    String  @id @default(cuid())
+  email String?
+  phone String?
+  name  String?
+
+  /// Role the invitee receives on acceptance. Chosen by the admin up front.
+  role Role @default(MEMBER)
+
+  /// Optional: the node they already occupy in the tree, so a new member lands
+  /// straight on themselves.
+  personId String?
+  person   Person? @relation("InviteTargetPerson", fields: [personId], references: [id], onDelete: SetNull)
+
+  tokenHash String  @unique
+  message   String?
+
+  invitedById String?
+  invitedBy   User?   @relation("InviteSender", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  lastSentAt DateTime  @default(now())
+  sendCount  Int       @default(1)
+  createdAt  DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+/// A temporary, single-use door for someone with no account: an elder on
+/// WhatsApp, a distant cousin. No password is ever requested.
+model ContributorLink {
+  id        String @id @default(cuid())
+  tokenHash String @unique
+
+  /// Human label so the queue reads "Grandma Ngozi's link", not a cuid.
+  label String
+
+  createdById String?
+  createdBy   User?   @relation("LinkCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Kept denormalised so an expired link can still say who to ask.
+  createdByName String
+
+  /// Optional existing node the form should prefill and attach to.
+  aboutPersonId String?
+  aboutPerson   Person? @relation("LinkAboutPerson", fields: [aboutPersonId], references: [id], onDelete: SetNull)
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  submissions Suggestion[] @relation("SuggestionViaLink")
+
+  @@index([expiresAt])
+}
+
+// ===========================================================================
+// Review queue and audit
+// ===========================================================================
+
+enum SuggestionKind {
+  FIELD_EDIT
+  NEW_PERSON
+  NEW_RELATIONSHIP
+  MEDIA
+  DELETE_REQUEST
+  REMOVAL_REQUEST
+}
+
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Nothing a member or contributor proposes about someone else goes live on its
+/// own. It lands here first.
+model Suggestion {
+  id   String         @id @default(cuid())
+  kind SuggestionKind
+
+  targetPersonId String?
+  targetPerson   Person? @relation("SuggestionTarget", fields: [targetPersonId], references: [id], onDelete: Cascade)
+
+  /// Shape depends on kind — validated with zod at the boundary before it is
+  /// written, and again before it is applied.
+  payload Json
+
+  note String?
+
+  submittedById String?
+  submittedBy   User?   @relation("SuggestionAuthor", fields: [submittedById], references: [id], onDelete: SetNull)
+
+  /// Set instead of submittedById when the source was a no-login contributor.
+  viaLinkId String?
+  viaLink   ContributorLink? @relation("SuggestionViaLink", fields: [viaLinkId], references: [id], onDelete: SetNull)
+  submitterName  String?
+  submitterEmail String?
+
+  status       SuggestionStatus @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?            @relation("SuggestionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+
+  media Media[] @relation("MediaSuggestion")
+
+  @@index([status, createdAt])
+  @@index([targetPersonId])
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  LINK
+  UNLINK
+  APPROVE
+  REJECT
+  INVITE
+  REVOKE
+  ROLE_CHANGE
+  LOGIN
+  EXPORT
+  ROLLBACK
+}
+
+/// Every write in the app lands here: who, what field, old value, new value,
+/// when. An admin can reverse any single row.
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorUserId String?
+  actorUser   User?   @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// Survives account deletion, and names non-account actors
+  /// ("Contributor link: Grandma Ngozi's link").
+  actorLabel String
+
+  action     AuditAction
+  entityType String /// "Person" | "Union" | "ParentChild" | …
+  entityId   String
+  /// Human-readable subject so the log reads without joining, e.g. "Ngozi Obini".
+  entityLabel String?
+
+  /// Null for whole-record actions; set for a single field change.
+  field    String?
+  oldValue Json?
+  newValue Json?
+
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  rolledBackAt   DateTime?
+  rolledBackById String?
+  rolledBackBy   User?     @relation("AuditRollbackBy", fields: [rolledBackById], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([actorUserId])
+}
+
+// ===========================================================================
+// Media, stories, events
+// ===========================================================================
+
+enum MediaKind {
+  PHOTO
+  AUDIO
+  VIDEO
+  DOCUMENT
+}
+
+model Media {
+  id       String    @id @default(cuid())
+  kind     MediaKind
+  /// Opaque storage key. Never a URL, and never publicly reachable — bytes are
+  /// only served through /api/media/[id] after authorization.
+  storageKey String  @unique
+  mimeType   String
+  sizeBytes  Int
+  width      Int?
+  height     Int?
+  durationSec Int?
+
+  caption     String?
+  approxYear  Int?
+  takenAt     DateTime?
+
+  personId String?
+  person   Person? @relation(fields: [personId], references: [id], onDelete: Cascade)
+  storyId  String?
+  story    Story?  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  albumId  String?
+  album    Album?  @relation(fields: [albumId], references: [id], onDelete: SetNull)
+
+  /// Set while the media is attached to an unapproved submission.
+  suggestionId String?
+  suggestion   Suggestion? @relation("MediaSuggestion", fields: [suggestionId], references: [id], onDelete: SetNull)
+
+  uploadedById String?
+  uploadedBy   User?   @relation("MediaUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedByName String?
+
+  isProfilePhoto Boolean @default(false)
+  isSeed         Boolean @default(false)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  comments  Comment[]
+  reactions Reaction[]
+
+  @@index([personId])
+  @@index([storyId])
+}
+
+enum StoryKind {
+  STORY
+  MILESTONE
+  TRIBUTE
+}
+
+model Story {
+  id    String    @id @default(cuid())
+  kind  StoryKind @default(STORY)
+  title String
+  body  String?
+
+  /// Approximate date the story is *about*, not when it was posted.
+  happenedAt     DateTime?
+  happenedText   String?
+
+  authorId       String?
+  author         User?   @relation("StoryAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  authorName     String?
+
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  media     Media[]
+  tags      StoryTag[]
+  comments  Comment[]
+  reactions Reaction[]
+
+  @@index([createdAt])
+}
+
+model StoryTag {
+  storyId  String
+  story    Story  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@id([storyId, personId])
+  @@index([personId])
+}
+
+/// A dated moment on one person's timeline: marriage, migration, graduation,
+/// first child. Shorter than a story and always anchored to a person.
+model Milestone {
+  id       String @id @default(cuid())
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  happenedAt  DateTime?
+  happenedText String?
+  place       String?
+
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([personId])
+}
+
+enum EventType {
+  WEDDING
+  FUNERAL
+  BIRTH
+  NAMING
+  REUNION
+  GRADUATION
+  OTHER
+}
+
+model Event {
+  id    String    @id @default(cuid())
+  type  EventType @default(OTHER)
+  title String
+  date  DateTime?
+  dateText String?
+  place String?
+  description String?
+
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  people  EventPerson[]
+  stories Story[]
+  albums  Album[]
+}
+
+model EventPerson {
+  eventId  String
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  personId String
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  role     String?
+
+  @@id([eventId, personId])
+}
+
+model Album {
+  id      String  @id @default(cuid())
+  title   String
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  isSeed    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  media Media[]
+}
+
+model Comment {
+  id   String @id @default(cuid())
+  body String
+
+  authorId   String?
+  author     User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName String?
+
+  storyId String?
+  story   Story?  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  mediaId String?
+  media   Media?  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([storyId])
+  @@index([mediaId])
+}
+
+model Reaction {
+  id     String @id @default(cuid())
+  emoji  String
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  storyId String?
+  story   Story?  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  mediaId String?
+  media   Media?  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, storyId, mediaId], name: "reaction_once")
+}
+
+// ===========================================================================
+// Family-wide configuration
+// ===========================================================================
+
+/// Single row, id = "singleton".
+model Settings {
+  id         String @id @default("singleton")
+  familyName String @default("Obini Family")
+  longName   String @default("The Obini Family Tree")
+
+  /// Default lifetime of a contributor link, in days.
+  contributorLinkDays Int @default(7)
+  /// Default lifetime of an invitation, in days.
+  invitationDays Int @default(14)
+
+  /// Living-person protection, admin-controlled and global. Members may
+  /// tighten these further on themselves but never loosen them.
+  hideLivingContactFromViewers   Boolean @default(true)
+  hideLivingExactDatesFromViewers Boolean @default(true)
+  hideLivingContactFromContributors Boolean @default(true)
+
+  /// Whether ordinary members may mint contributor links.
+  allowMemberContributorLinks Boolean @default(true)
+
+  /// Days a soft-deleted record stays recoverable.
+  softDeleteWindowDays Int @default(30)
+
+  birthdayRemindersEnabled Boolean @default(true)
+  remembranceRemindersEnabled Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+}
+
+/// Culturally specific kinship terms, keyed by the calculator's canonical code
+/// (e.g. "FATHERS_ELDER_BROTHER"). Editable by an admin so the family can put
+/// its own language in front of the anthropological label.
+model KinshipTerm {
+  id       String  @id @default(cuid())
+  code     String
+  language String
+  term     String
+  note     String?
+
+  @@unique([code, language], name: "term_code_language")
+}
