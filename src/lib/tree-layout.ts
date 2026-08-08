@@ -1,6 +1,18 @@
+import "server-only";
 import type { FamilyGraph } from "@/lib/graph";
 import { compareBirth } from "@/lib/graph";
-import type { ParentType } from "@prisma/client";
+import { NODE_H, NODE_W } from "@/lib/tree-types";
+import type {
+  FanLayout,
+  FanSegment,
+  TreeEdge,
+  TreeLayout,
+  TreeNode,
+} from "@/lib/tree-types";
+
+// Re-exported for server code that already imports from here.
+export type { FanLayout, FanSegment, TreeEdge, TreeLayout, TreeNode };
+export { NODE_H, NODE_W };
 
 /**
  * ---------------------------------------------------------------------------
@@ -13,37 +25,8 @@ import type { ParentType } from "@prisma/client";
  * ---------------------------------------------------------------------------
  */
 
-export const NODE_W = 150;
-export const NODE_H = 78;
 const H_GAP = 26;
 const V_GAP = 92;
-
-export type TreeNode = {
-  id: string;
-  /** Centre of the card. */
-  x: number;
-  y: number;
-  generation: number;
-  /** Set when this card is only here as somebody's husband or wife. */
-  marriedInTo?: string;
-  unionId?: string;
-  /** The marriage ended — drawn with a broken line. */
-  unionEnded?: boolean;
-};
-
-export type TreeEdge =
-  | { kind: "PARENT"; from: string; to: string; type: ParentType }
-  | { kind: "UNION"; a: string; b: string; ended: boolean; order: number | null };
-
-export type TreeLayout = {
-  nodes: TreeNode[];
-  edges: TreeEdge[];
-  width: number;
-  height: number;
-  rootId: string;
-  /** People the walk never reached, so the UI can offer them honestly. */
-  omitted: number;
-};
 
 /**
  * Vertical descendant tree. Children hang below their parents; spouses sit
@@ -196,27 +179,6 @@ export function buildDescendantTree(
  * on a wider arc above them. Reads at a glance on a small screen, where a wide
  * pedigree chart does not.
  */
-export type FanSegment = {
-  id: string;
-  generation: number;
-  /** Radians, measured from due west, sweeping over the top. */
-  startAngle: number;
-  endAngle: number;
-  innerRadius: number;
-  outerRadius: number;
-  labelX: number;
-  labelY: number;
-  labelAngle: number;
-};
-
-export type FanLayout = {
-  segments: FanSegment[];
-  centre: { x: number; y: number };
-  width: number;
-  height: number;
-  focusId: string;
-};
-
 export function buildAncestorFan(
   graph: FamilyGraph,
   focusId: string,

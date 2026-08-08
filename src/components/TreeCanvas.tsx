@@ -2,17 +2,15 @@
 
 import { useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { NODE_H, NODE_W, type TreeEdge, type TreeNode } from "@/lib/tree-layout";
+import {
+  NODE_H,
+  NODE_W,
+  type TreeEdge,
+  type TreeNode,
+  type TreePerson,
+} from "@/lib/tree-types";
 
-export type TreePerson = {
-  id: string;
-  name: string;
-  sub: string;
-  deceased: boolean;
-  gender: "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
-  limited: boolean;
-  isSeed: boolean;
-};
+export type { TreePerson };
 
 /**
  * Pan and zoom over an SVG the server already positioned.

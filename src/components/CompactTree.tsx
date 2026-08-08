@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import type { TreePerson } from "@/components/TreeCanvas";
+import type { TreePerson } from "@/lib/tree-types";
 
 type ShapeOnly = {
   order: string[];

@@ -10,7 +10,8 @@ import {
 } from "@/lib/tree-layout";
 import { lifespan } from "@/lib/dates";
 import { db } from "@/lib/db";
-import TreeCanvas, { type TreePerson } from "@/components/TreeCanvas";
+import TreeCanvas from "@/components/TreeCanvas";
+import type { TreePerson } from "@/lib/tree-types";
 import AncestorFan from "@/components/AncestorFan";
 import CompactTree from "@/components/CompactTree";
 

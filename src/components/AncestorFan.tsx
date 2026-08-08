@@ -1,8 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import type { FanLayout } from "@/lib/tree-layout";
-import type { TreePerson } from "@/components/TreeCanvas";
+import type { FanLayout, TreePerson } from "@/lib/tree-types";
 
 /**
  * Ancestors as a fan: the focus person at the hub, each generation of
